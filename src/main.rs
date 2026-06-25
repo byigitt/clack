@@ -1,7 +1,10 @@
-//! clack — native macOS mechanical keyboard sounds. Phase 0: Dock + menu bar shell.
+//! clack — native macOS mechanical keyboard sounds.
+//! Dock + menu-bar app: CGEventTap key capture -> cpal additive mixer, reusing
+//! thock's soundpacks. Menu controls enable/volume/pitch/soundpack.
 
 mod audio;
 mod input;
+mod menu;
 mod permissions;
 mod soundpack;
 
@@ -12,7 +15,6 @@ use arc_swap::ArcSwap;
 
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
-use tray_icon::menu::{Menu, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 
 /// Tiny generated icon so we don't need a bundled asset yet.
@@ -78,19 +80,28 @@ fn main() {
     if !input::tap::install(state) {
         eprintln!("clack: key capture unavailable — grant Accessibility and relaunch.");
     }
-    let _ = &engine; // keep the audio stream alive
 
-    let menu = Menu::new();
-    menu.append(&PredefinedMenuItem::quit(Some("Quit clack")))
-        .expect("append quit");
-
-    // Keep the tray alive for the whole process.
+    // Build the menu + tray, and spawn the click poller.
+    let (m, action_map) = menu::build(&packs, enabled.load(std::sync::atomic::Ordering::Relaxed));
     let _tray: TrayIcon = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
+        .with_menu(Box::new(m))
         .with_tooltip("clack")
         .with_icon(tray_image())
         .build()
         .expect("build tray");
 
+    menu::spawn_poller(
+        action_map,
+        menu::MenuShared {
+            enabled: enabled.clone(),
+            pitch: pitch.clone(),
+            volume: engine.volume_handle(),
+            bank: bank.clone(),
+            sample_rate: engine.sample_rate,
+        },
+        packs,
+    );
+
+    let _ = &engine; // keep the audio stream alive
     app.run();
 }

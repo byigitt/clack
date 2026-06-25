@@ -112,8 +112,9 @@ impl AudioEngine {
         ))
     }
 
-    #[allow(dead_code)] // wired to the menu volume control in a later phase
-    pub fn set_volume(&self, v: f32) {
-        self.volume.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    /// A clonable handle to the master volume, so the menu thread can adjust it
+    /// without holding the (non-Send) cpal stream.
+    pub fn volume_handle(&self) -> Arc<AtomicU32> {
+        self.volume.clone()
     }
 }
