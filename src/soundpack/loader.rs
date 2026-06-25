@@ -7,11 +7,39 @@ use std::sync::Arc;
 use super::config::PackConfig;
 use crate::audio::bank::{PcmId, Sample, SoundBank};
 
-/// `~/Library/Application Support/Thock/Soundpacks`
-pub fn soundpacks_dir() -> Option<PathBuf> {
-    dirs::home_dir()
-        .map(|h| h.join("Library/Application Support/Thock/Soundpacks"))
-        .filter(|p| p.is_dir())
+/// The writable directory where users drop their own packs:
+/// `~/Library/Application Support/Clack/Soundpacks`.
+pub fn custom_soundpacks_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|d| d.join("Clack/Soundpacks"))
+}
+
+/// Soundpacks bundled inside the .app (`Contents/Resources/Soundpacks`).
+fn bundled_soundpacks_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let contents = exe.parent()?.parent()?; // .../Contents/MacOS -> .../Contents
+    let p = contents.join("Resources/Soundpacks");
+    p.is_dir().then_some(p)
+}
+
+/// All roots scanned for packs, in priority order (first occurrence of a given
+/// pack directory wins).
+fn pack_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(p) = bundled_soundpacks_dir() {
+        roots.push(p);
+    }
+    // Dev: `./soundpacks` next to the repo when running via `cargo run`.
+    if let Ok(cwd) = std::env::current_dir() {
+        roots.push(cwd.join("soundpacks"));
+    }
+    if let Some(p) = custom_soundpacks_dir() {
+        roots.push(p);
+    }
+    // Backwards-compat: packs installed by thock.
+    if let Some(h) = dirs::data_dir() {
+        roots.push(h.join("Thock/Soundpacks"));
+    }
+    roots
 }
 
 /// A discovered pack: its directory plus parsed metadata name.
@@ -22,26 +50,34 @@ pub struct PackEntry {
     pub category: String,
 }
 
-/// List all valid packs (dir has a parseable config.json).
+/// List all valid packs across every root (dir has a parseable config.json),
+/// de-duplicated by directory name so a bundled pack isn't listed twice.
 pub fn list_packs() -> Vec<PackEntry> {
-    let Some(root) = soundpacks_dir() else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&root) else {
-        return out;
-    };
-    for e in entries.flatten() {
-        let dir = e.path();
-        if !dir.is_dir() {
+    let mut out: Vec<PackEntry> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for root in pack_roots() {
+        let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
-        }
-        if let Some(cfg) = read_config(&dir) {
-            out.push(PackEntry {
-                name: cfg.metadata.name,
-                category: cfg.metadata.category,
-                dir,
-            });
+        };
+        for e in entries.flatten() {
+            let dir = e.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let key = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if !seen.insert(key) {
+                continue;
+            }
+            if let Some(cfg) = read_config(&dir) {
+                out.push(PackEntry {
+                    name: cfg.metadata.name,
+                    category: cfg.metadata.category,
+                    dir,
+                });
+            }
         }
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));

@@ -14,6 +14,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
 cp target/release/clack "$APP/Contents/MacOS/clack"
 [ -f assets/clack.icns ] && cp assets/clack.icns "$APP/Contents/Resources/clack.icns" || true
+# Bundle the built-in soundpacks so the app is self-contained.
+if [ -d soundpacks ]; then
+  cp -R soundpacks "$APP/Contents/Resources/Soundpacks"
+  echo "==> bundled $(ls soundpacks | wc -l | tr -d ' ') soundpacks"
+fi
 
 echo "==> ad-hoc codesign (stable identity for Accessibility)"
 codesign --force --deep --sign - "$APP"

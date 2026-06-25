@@ -1,0 +1,60 @@
+{
+  "metadata": {
+    "name": "Unknown",
+    "brand": "Unknown",
+    "author": "webdevcody",
+    "supportsKeyUp": true,
+    "category": "keyboard"
+  },
+  "license": {
+    "type": "MIT",
+    "url": "https://github.com/webdevcody/type-joy/blob/main/LICENSE"
+  },
+  "sounds": {
+    "default": {
+      "down": [
+        "1.wav",
+        "2.wav",
+        "3.wav",
+        "4.wav",
+        "5.wav",
+        "6.wav",
+        "7.wav"
+      ],
+      "up": [
+        "101.wav",
+        "102.wav",
+        "103.wav",
+        "104.wav",
+        "105.wav",
+        "106.wav",
+        "107.wav"
+      ]
+    },
+    "space": {
+      "down": [
+        "201.wav"
+      ],
+      "up": [
+        "251.wav"
+      ]
+    },
+    "enter": {
+      "down": [
+        "301.wav"
+      ],
+      "up": [
+        "351.wav"
+      ]
+    },
+    "backspace": {
+      "down": [
+        "301.wav"
+      ],
+      "up": [
+        "351.wav"
+      ]
+    }
+  },
+  "id": "c3f120e1-809f-4265-8167-14d708c99a48"
+}

@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "name": "Quack",
+    "brand": "Quirky",
+    "author": "Freesound Community",
+    "supportsKeyUp": true,
+    "category": "keyboard"
+  },
+  "license": {
+    "type": "Pixabay Content License",
+    "url": "https://pixabay.com/pl/service/license-summary/"
+  },
+  "sounds": {
+    "default": {
+      "down": [
+        "1.wav"
+      ],
+      "up": []
+    }
+  },
+  "id": "5e02cd62-f79b-43c4-8899-78bbb630a81d"
+}
