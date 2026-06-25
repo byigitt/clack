@@ -14,12 +14,17 @@ every keypress. A blazing-fast Rust rewrite of
 ## Build
 
 ```sh
-cargo run --release
+cargo run --release        # run directly
+./scripts/bundle.sh        # build dist/clack.app (Dock app, ad-hoc signed)
 ```
+
+Grant Accessibility permission on first run (System Settings → Privacy &
+Security → Accessibility) so the global key tap can see your keystrokes.
 
 ## Stack
 
-`cpal` · `objc2` / `objc2-app-kit` / `objc2-core-graphics` · `tray-icon` + `muda` ·
-`hound` · `rtrb` · `arc-swap` · `fastrand` · `dirs`
+`cpal` · `objc2` / `objc2-app-kit` / `objc2-core-graphics` / `objc2-service-management` ·
+`tray-icon` + `muda` · `hound` · `rtrb` · `arc-swap` · `fastrand` · `dirs` ·
+`macos-accessibility-client`
 
 MIT.
