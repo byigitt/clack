@@ -6,6 +6,7 @@ mod audio;
 mod input;
 mod menu;
 mod permissions;
+mod settings;
 mod soundpack;
 
 use std::sync::atomic::{AtomicBool, AtomicU32};
@@ -52,21 +53,34 @@ fn main() {
     let (engine, tx) = audio::engine::AudioEngine::start().expect("audio engine");
     eprintln!("clack: audio @ {} Hz", engine.sample_rate);
 
+    let cfg = settings::Settings::load();
+    engine
+        .volume_handle()
+        .store(cfg.volume.to_bits(), std::sync::atomic::Ordering::Relaxed);
+
     let packs = soundpack::loader::list_packs();
     eprintln!("clack: found {} soundpack(s)", packs.len());
-    let bank = packs
+    // Prefer the saved pack, else the first keyboard pack.
+    let chosen = packs
         .iter()
-        .find(|p| p.category == "keyboard")
+        .find(|p| {
+            cfg.pack.as_deref()
+                == p.dir.file_name().and_then(|n| n.to_str())
+        })
+        .or_else(|| packs.iter().find(|p| p.category == "keyboard"));
+    let current_pack = chosen
+        .and_then(|p| p.dir.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let bank = chosen
         .and_then(|p| soundpack::loader::load_pack(&p.dir, engine.sample_rate).ok())
         .unwrap_or_else(audio::bank::SoundBank::empty);
     eprintln!("clack: loaded '{}' — {} samples", bank.name, bank.samples.len());
 
-    // Shared state between the menu (later) and the event tap.
+    // Shared state between the menu and the event tap, seeded from settings.
     let bank = Arc::new(ArcSwap::from_pointee(bank));
-    let enabled = Arc::new(AtomicBool::new(true));
-    let pitch = Arc::new(AtomicU32::new(0.0f32.to_bits()));
-    let disable_modifiers = Arc::new(AtomicBool::new(false));
-    let ignore_rapid = Arc::new(AtomicBool::new(false));
+    let enabled = Arc::new(AtomicBool::new(cfg.enabled));
+    let pitch = Arc::new(AtomicU32::new(cfg.pitch.to_bits()));
+    let disable_modifiers = Arc::new(AtomicBool::new(cfg.disable_modifiers));
+    let ignore_rapid = Arc::new(AtomicBool::new(cfg.ignore_rapid));
 
     // Install the global keyboard tap. The tx (ring producer) moves into it.
     let state = input::tap::TapState::new(
@@ -82,7 +96,7 @@ fn main() {
     }
 
     // Build the menu + tray, and spawn the click poller.
-    let (m, action_map) = menu::build(&packs, enabled.load(std::sync::atomic::Ordering::Relaxed));
+    let (m, action_map) = menu::build(&packs, &cfg);
     let _tray: TrayIcon = TrayIconBuilder::new()
         .with_menu(Box::new(m))
         .with_tooltip("clack")
@@ -96,10 +110,13 @@ fn main() {
             enabled: enabled.clone(),
             pitch: pitch.clone(),
             volume: engine.volume_handle(),
+            ignore_rapid: ignore_rapid.clone(),
+            disable_modifiers: disable_modifiers.clone(),
             bank: bank.clone(),
             sample_rate: engine.sample_rate,
         },
         packs,
+        current_pack,
     );
 
     let _ = &engine; // keep the audio stream alive

@@ -18,6 +18,8 @@ pub enum Action {
     Volume(f32),
     Pitch(f32),
     Pack(usize),
+    ToggleRapid,
+    ToggleModifiers,
 }
 
 /// Shared state the poller mutates. All fields are `Send`/thread-safe.
@@ -25,17 +27,36 @@ pub struct MenuShared {
     pub enabled: Arc<AtomicBool>,
     pub pitch: Arc<AtomicU32>,  // semitone variation, f32 bits
     pub volume: Arc<AtomicU32>, // master volume, f32 bits
+    pub ignore_rapid: Arc<AtomicBool>,
+    pub disable_modifiers: Arc<AtomicBool>,
     pub bank: Arc<ArcSwap<SoundBank>>,
     pub sample_rate: u32,
 }
 
+impl MenuShared {
+    /// Snapshot current state into a persistable `Settings`.
+    fn snapshot(&self, pack: Option<String>) -> crate::settings::Settings {
+        crate::settings::Settings {
+            enabled: self.enabled.load(Ordering::Relaxed),
+            volume: f32::from_bits(self.volume.load(Ordering::Relaxed)),
+            pitch: f32::from_bits(self.pitch.load(Ordering::Relaxed)),
+            ignore_rapid: self.ignore_rapid.load(Ordering::Relaxed),
+            disable_modifiers: self.disable_modifiers.load(Ordering::Relaxed),
+            pack,
+        }
+    }
+}
+
 /// Build the menu. Returns the `Menu` (give it to the tray) and the id->action
 /// map (move it into the poller). Packs are listed for the soundpack submenu.
-pub fn build(packs: &[PackEntry], enabled: bool) -> (Menu, HashMap<MenuId, Action>) {
+pub fn build(
+    packs: &[PackEntry],
+    s: &crate::settings::Settings,
+) -> (Menu, HashMap<MenuId, Action>) {
     let menu = Menu::new();
     let mut map: HashMap<MenuId, Action> = HashMap::new();
 
-    let enable = CheckMenuItem::new("Enable clack", true, enabled, None);
+    let enable = CheckMenuItem::new("Enable clack", true, s.enabled, None);
     map.insert(enable.id().clone(), Action::Toggle);
     let _ = menu.append(&enable);
     let _ = menu.append(&PredefinedMenuItem::separator());
@@ -73,13 +94,29 @@ pub fn build(packs: &[PackEntry], enabled: bool) -> (Menu, HashMap<MenuId, Actio
     let _ = menu.append(&picker);
     let _ = menu.append(&PredefinedMenuItem::separator());
 
+    // Quick settings.
+    let quick = Submenu::new("Quick settings", true);
+    let rapid = CheckMenuItem::new("Ignore rapid keys (<10ms)", true, s.ignore_rapid, None);
+    map.insert(rapid.id().clone(), Action::ToggleRapid);
+    let _ = quick.append(&rapid);
+    let mods = CheckMenuItem::new("Disable modifier sounds", true, s.disable_modifiers, None);
+    map.insert(mods.id().clone(), Action::ToggleModifiers);
+    let _ = quick.append(&mods);
+    let _ = menu.append(&quick);
+    let _ = menu.append(&PredefinedMenuItem::separator());
+
     let _ = menu.append(&PredefinedMenuItem::quit(Some("Quit clack")));
 
     (menu, map)
 }
 
 /// Spawn the background poller. Consumes the id->action map and shared state.
-pub fn spawn_poller(map: HashMap<MenuId, Action>, shared: MenuShared, packs: Vec<PackEntry>) {
+pub fn spawn_poller(
+    map: HashMap<MenuId, Action>,
+    shared: MenuShared,
+    packs: Vec<PackEntry>,
+    mut current_pack: Option<String>,
+) {
     std::thread::spawn(move || {
         let rx = MenuEvent::receiver();
         while let Ok(ev) = rx.recv() {
@@ -97,18 +134,31 @@ pub fn spawn_poller(map: HashMap<MenuId, Action>, shared: MenuShared, packs: Vec
                 Action::Pitch(p) => {
                     shared.pitch.store(p.to_bits(), Ordering::Relaxed);
                 }
+                Action::ToggleRapid => {
+                    let now = !shared.ignore_rapid.load(Ordering::Relaxed);
+                    shared.ignore_rapid.store(now, Ordering::Relaxed);
+                }
+                Action::ToggleModifiers => {
+                    let now = !shared.disable_modifiers.load(Ordering::Relaxed);
+                    shared.disable_modifiers.store(now, Ordering::Relaxed);
+                }
                 Action::Pack(idx) => {
                     if let Some(p) = packs.get(*idx) {
                         match loader::load_pack(&p.dir, shared.sample_rate) {
                             Ok(bank) => {
                                 eprintln!("clack: switched to '{}'", bank.name);
                                 shared.bank.store(Arc::new(bank));
+                                current_pack = p
+                                    .dir
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned());
                             }
                             Err(e) => eprintln!("clack: pack load failed: {e}"),
                         }
                     }
                 }
             }
+            shared.snapshot(current_pack.clone()).save();
         }
     });
 }
