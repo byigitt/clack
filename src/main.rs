@@ -16,14 +16,41 @@ use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
 use objc2::runtime::ProtocolObject;
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
-use objc2_foundation::MainThreadMarker;
+use objc2::AllocAnyThread;
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSImage};
+use objc2_foundation::{MainThreadMarker, NSString};
+
+/// Locate the app icon: bundled `Resources/clack.icns`, else dev `assets/clack.icns`.
+fn app_icon(mtm: MainThreadMarker) -> Option<objc2::rc::Retained<NSImage>> {
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(contents) = exe.parent().and_then(|p| p.parent()) {
+            candidates.push(contents.join("Resources/clack.icns"));
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("assets/clack.icns"));
+    }
+    for path in candidates {
+        if path.is_file() {
+            let s = NSString::from_str(&path.to_string_lossy());
+            let _ = mtm;
+            if let Some(img) = NSImage::initWithContentsOfFile(NSImage::alloc(), &s) {
+                return Some(img);
+            }
+        }
+    }
+    None
+}
 
 fn main() {
     let mtm = MainThreadMarker::new().expect("main thread");
     let app = NSApplication::sharedApplication(mtm);
     // Regular = visible in the Dock (not a pure menu-bar agent).
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+    if let Some(icon) = app_icon(mtm) {
+        unsafe { app.setApplicationIconImage(Some(&icon)) };
+    }
 
     // CLACK_NO_PROMPT lets you launch the UI without the Accessibility prompt
     // (e.g. for screenshots); key capture stays off until granted.

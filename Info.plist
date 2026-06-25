@@ -8,6 +8,8 @@
 	<string>clack</string>
 	<key>CFBundleExecutable</key>
 	<string>clack</string>
+	<key>CFBundleIconFile</key>
+	<string>clack</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.byigitt.clack</string>
 	<key>CFBundleVersion</key>
