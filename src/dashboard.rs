@@ -101,6 +101,20 @@ define_class!(
         fn get_packs(&self, _sender: &NSButton) {
             open_url("https://github.com/kamillobinski/thock");
         }
+        #[unsafe(method(grantAccess:))]
+        fn grant_access(&self, _sender: &NSButton) {
+            open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+        }
+        #[unsafe(method(relaunchApp:))]
+        fn relaunch_app(&self, _sender: &NSButton) {
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(app) = exe.ancestors().nth(3) {
+                    let _ = std::process::Command::new("open").arg(app).spawn();
+                }
+            }
+            let mtm = MainThreadMarker::from(self);
+            unsafe { NSApplication::sharedApplication(mtm).terminate(None) };
+        }
 
         // --- status-bar menu actions ---
         #[unsafe(method(menuEnable:))]
@@ -564,11 +578,54 @@ impl Controller {
         let pane = vstack(mtm, 16.0);
         unsafe {
             pane.addArrangedSubview(&pane_title(mtm, "Settings"));
+            if !crate::permissions::is_trusted() {
+                pane.addArrangedSubview(&self.permission_banner(mtm, W));
+            }
             pane.addArrangedSubview(&sound);
             pane.addArrangedSubview(&behavior);
             pane.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
         pane
+    }
+
+    /// A warning shown until Accessibility is granted (key sounds need it).
+    fn permission_banner(&self, mtm: MainThreadMarker, w: f64) -> Retained<NSStackView> {
+        let target: &AnyObject = self;
+        let inner = vstack(mtm, 8.0);
+        unsafe {
+            inner.setEdgeInsets(objc2_foundation::NSEdgeInsets {
+                top: 14.0,
+                left: 16.0,
+                bottom: 14.0,
+                right: 16.0,
+            });
+            let title = label(mtm, "\u{26A0}\u{FE0E}  Accessibility needed", 13.0, Weight::Bold, false);
+            title.setTextColor(Some(&NSColor::systemOrangeColor()));
+            inner.addArrangedSubview(&title);
+            inner.addArrangedSubview(&wrap_label(
+                mtm,
+                "clack needs Accessibility permission to hear your keystrokes. Grant it, then relaunch clack.",
+                w - 32.0,
+            ));
+            let btns = hstack(mtm, 8.0);
+            btns.addArrangedSubview(&action_button(mtm, "Open Settings", target, sel(c"grantAccess:")));
+            btns.addArrangedSubview(&action_button(mtm, "Relaunch clack", target, sel(c"relaunchApp:")));
+            inner.addArrangedSubview(&btns);
+        }
+        let panel = unsafe { NSBox::new(mtm) };
+        unsafe {
+            panel.setBoxType(NSBoxType::Custom);
+            panel.setTitlePosition(NSTitlePosition::NoTitle);
+            panel.setCornerRadius(10.0);
+            panel.setBorderWidth(1.0);
+            panel.setBorderColor(&NSColor::systemOrangeColor());
+            panel.setFillColor(&NSColor::colorWithCalibratedWhite_alpha(1.0, 0.04));
+            panel.setContentView(Some(&inner));
+        }
+        width(&panel, w);
+        let wrap = vstack(mtm, 0.0);
+        unsafe { wrap.addArrangedSubview(&panel) };
+        wrap
     }
 
     fn soundpacks_pane(&self, mtm: MainThreadMarker) -> Retained<NSStackView> {

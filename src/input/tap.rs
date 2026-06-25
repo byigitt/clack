@@ -183,7 +183,10 @@ pub fn install(state: TapState) -> bool {
         CGEvent::tap_create(
             CGEventTapLocation::HIDEventTap,
             CGEventTapPlacement(1), // tailAppendEventTap
-            CGEventTapOptions(1),   // listenOnly
+            // defaultTap (not listenOnly): a listen-only keyboard tap needs Input
+            // Monitoring, but a default tap uses Accessibility (what we prompt
+            // for). Without this, only modifier (flagsChanged) events arrive.
+            CGEventTapOptions(0),
             mask,
             CB,
             state_ptr as *mut c_void,
