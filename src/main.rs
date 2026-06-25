@@ -3,17 +3,21 @@
 //! thock's soundpacks. Menu controls enable/volume/pitch/soundpack.
 
 mod audio;
+mod dashboard;
 mod input;
 mod launch;
 mod menu;
 mod permissions;
 mod settings;
 mod soundpack;
+mod state;
 
 use std::sync::atomic::{AtomicBool, AtomicU32};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
+use objc2::runtime::ProtocolObject;
+use objc2_app_kit::NSApplicationDelegate;
 
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
@@ -84,6 +88,20 @@ fn main() {
     let ignore_rapid = Arc::new(AtomicBool::new(cfg.ignore_rapid));
     let launch_at_login = Arc::new(AtomicBool::new(cfg.launch_at_login));
 
+    // One shared-state bundle drives the tap, the menu, and the dashboard.
+    let shared = state::Shared {
+        enabled: enabled.clone(),
+        pitch: pitch.clone(),
+        volume: engine.volume_handle(),
+        ignore_rapid: ignore_rapid.clone(),
+        disable_modifiers: disable_modifiers.clone(),
+        launch_at_login: launch_at_login.clone(),
+        bank: bank.clone(),
+        sample_rate: engine.sample_rate,
+        packs: Arc::new(packs.clone()),
+        current_pack: Arc::new(Mutex::new(current_pack)),
+    };
+
     // Install the global keyboard tap. The tx (ring producer) moves into it.
     let state = input::tap::TapState::new(
         tx,
@@ -105,23 +123,16 @@ fn main() {
         .with_icon(tray_image())
         .build()
         .expect("build tray");
+    menu::spawn_poller(action_map, shared.clone());
 
-    menu::spawn_poller(
-        action_map,
-        menu::MenuShared {
-            enabled: enabled.clone(),
-            pitch: pitch.clone(),
-            volume: engine.volume_handle(),
-            ignore_rapid: ignore_rapid.clone(),
-            disable_modifiers: disable_modifiers.clone(),
-            launch_at_login: launch_at_login.clone(),
-            bank: bank.clone(),
-            sample_rate: engine.sample_rate,
-        },
-        packs,
-        current_pack,
-    );
+    // Build the dashboard window + make it the app delegate (so a Dock click
+    // re-opens it). Keep the controller alive for the whole process.
+    let controller = dashboard::Controller::new(mtm, shared);
+    let delegate: &ProtocolObject<dyn NSApplicationDelegate> =
+        ProtocolObject::from_ref(&*controller);
+    app.setDelegate(Some(delegate));
 
     let _ = &engine; // keep the audio stream alive
     app.run();
+    drop(controller);
 }

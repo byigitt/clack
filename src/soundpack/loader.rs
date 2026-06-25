@@ -15,6 +15,7 @@ pub fn soundpacks_dir() -> Option<PathBuf> {
 }
 
 /// A discovered pack: its directory plus parsed metadata name.
+#[derive(Clone)]
 pub struct PackEntry {
     pub dir: PathBuf,
     pub name: String,

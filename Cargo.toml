@@ -35,6 +35,20 @@ features = [
     "NSApplication",
     "NSResponder",
     "NSRunningApplication",
+    "NSWindow",
+    "NSView",
+    "NSControl",
+    "NSCell",
+    "NSButton",
+    "NSSlider",
+    "NSPopUpButton",
+    "NSStackView",
+    "NSTextField",
+    "NSText",
+    "NSFont",
+    "NSLayoutConstraint",
+    "NSUserInterfaceLayout",
+    "NSGraphics",
 ]
 
 [profile.release]

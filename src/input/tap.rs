@@ -105,6 +105,14 @@ unsafe extern "C-unwind" fn callback(
     };
 
     if fire {
+        if std::env::var_os("CLACK_DEBUG").is_some() {
+            eprintln!(
+                "clack: key {} {} -> '{}'",
+                code,
+                if key_down { "down" } else { "up" },
+                crate::input::keymap::key_name(code)
+            );
+        }
         // Optional rapid-event guard (<10ms between events).
         if state.ignore_rapid.load(Ordering::Relaxed) {
             let now = now_ns();
