@@ -52,15 +52,23 @@ fn main() {
         unsafe { app.setApplicationIconImage(Some(&icon)) };
     }
 
-    // CLACK_NO_PROMPT lets you launch the UI without the Accessibility prompt
-    // (e.g. for screenshots); key capture stays off until granted.
-    let trusted = if std::env::var_os("CLACK_NO_PROMPT").is_some() {
-        permissions::is_trusted()
-    } else {
-        permissions::ensure_trusted()
-    };
-    if !trusted {
-        eprintln!("clack: waiting for Accessibility permission (System Settings → Privacy & Security → Accessibility).");
+    // Show the system Accessibility prompt at most ONCE (tracked by a marker
+    // file). After that the in-app banner guides the user, so we never spam the
+    // OS dialog on every launch. CLACK_NO_PROMPT disables it entirely.
+    let trusted = permissions::is_trusted();
+    if !trusted && std::env::var_os("CLACK_NO_PROMPT").is_none() {
+        let marker = dirs::data_dir().map(|d| d.join("Clack/.prompted"));
+        let first_time = marker.as_ref().map(|m| !m.exists()).unwrap_or(true);
+        if first_time {
+            permissions::ensure_trusted(); // registers clack + shows the dialog once
+            if let Some(m) = marker {
+                if let Some(parent) = m.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&m, "");
+            }
+        }
+        eprintln!("clack: Accessibility not granted yet — grant it in Settings, then relaunch.");
     }
 
     // Start the audio engine, then load a pack at the device sample rate.
