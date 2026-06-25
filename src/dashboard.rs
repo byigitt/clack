@@ -246,6 +246,9 @@ impl Controller {
         }
 
         let menu = NSMenu::new(mtm);
+        // We manage item state ourselves; without this, AppKit auto-disables the
+        // submenu roots and the slider (they have no responder for their action).
+        unsafe { menu.setAutoenablesItems(false) };
 
         let enable = menu_item(mtm, "Enable clack", target, sel(c"menuEnable:"));
         unsafe { enable.setState(state(shared.enabled())) };
