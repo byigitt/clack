@@ -40,21 +40,35 @@ fn main() {
         eprintln!("clack: waiting for Accessibility permission (System Settings → Privacy & Security → Accessibility).");
     }
 
-    // Phase 2 smoke check: list packs and load the first one.
+    // Start the audio engine, then load a pack at the device sample rate.
+    let (engine, mut tx) = audio::engine::AudioEngine::start().expect("audio engine");
+    eprintln!("clack: audio @ {} Hz", engine.sample_rate);
+
     let packs = soundpack::loader::list_packs();
     eprintln!("clack: found {} soundpack(s)", packs.len());
-    if let Some(first) = packs.iter().find(|p| p.category == "keyboard") {
-        match soundpack::loader::load_pack(&first.dir, 48_000) {
-            Ok(bank) => eprintln!(
-                "clack: loaded '{}' — {} samples, {} down keys, supports_key_up={}",
-                bank.name,
-                bank.samples.len(),
-                bank.down.len(),
-                bank.supports_key_up
-            ),
-            Err(e) => eprintln!("clack: load failed: {e}"),
-        }
+    let bank = packs
+        .iter()
+        .find(|p| p.category == "keyboard")
+        .and_then(|p| soundpack::loader::load_pack(&p.dir, engine.sample_rate).ok())
+        .unwrap_or_else(audio::bank::SoundBank::empty);
+    eprintln!("clack: loaded '{}' — {} samples", bank.name, bank.samples.len());
+
+    // Phase 3 smoke test: click 'default' down every 500ms on a background thread.
+    if std::env::var("CLACK_TEST_TICK").is_ok() {
+        std::thread::spawn(move || loop {
+            if let Some(id) = bank.pick_down("default") {
+                let s = bank.sample(id);
+                let _ = tx.push(audio::engine::Trigger {
+                    data: s.data.clone(),
+                    frames: s.frames,
+                    gain: 1.0,
+                    ratio: 1.0,
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        });
     }
+    let _ = &engine;
 
     let menu = Menu::new();
     menu.append(&PredefinedMenuItem::quit(Some("Quit clack")))
