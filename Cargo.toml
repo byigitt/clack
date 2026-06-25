@@ -1,6 +1,6 @@
 [package]
 name = "clack"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Native macOS mechanical keyboard sounds — a Rust rewrite of thock"
 license = "MIT"
