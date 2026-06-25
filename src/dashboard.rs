@@ -100,7 +100,9 @@ define_class!(
         }
         #[unsafe(method(getPacks:))]
         fn get_packs(&self, _sender: &NSButton) {
-            open_url("https://github.com/kamillobinski/thock");
+            // Mechvibes' community library is the largest source of compatible
+            // (config.json + .wav) keyboard soundpacks.
+            open_url("https://mechvibes.com/sound-packs/");
         }
         #[unsafe(method(grantAccess:))]
         fn grant_access(&self, _sender: &NSButton) {
@@ -700,7 +702,7 @@ impl Controller {
 
     fn guide_pane(&self, mtm: MainThreadMarker) -> Retained<NSStackView> {
         let target: &AnyObject = self;
-        let body = "clack ships with 20+ soundpacks. Each pack is a folder with:\n\n  \u{2022}  config.json \u{2014} metadata + which sound plays for each key\n  \u{2022}  a set of .wav files\n\nAdd your own pack:\n  1.  Open the Soundpacks folder (button below).\n  2.  Drop the pack's folder inside it.\n  3.  Relaunch clack \u{2014} it shows up under Soundpacks.\n\nYour packs live in:\n  ~/Library/Application Support/Clack/Soundpacks/\n(clack also reads thock's packs if you have them.)\n\nMake your own: copy a folder, swap the .wav files, edit config.json. 'default' is the fallback; 'space', 'enter', \u{2026} override specific keys.";
+        let body = "clack ships with 20+ soundpacks. Each pack is a folder with:\n\n  \u{2022}  config.json \u{2014} metadata + which sound plays for each key\n  \u{2022}  a set of .wav files\n\nAdd your own pack:\n  1.  Open the Soundpacks folder (button below).\n  2.  Drop the pack's folder inside it.\n  3.  Relaunch clack \u{2014} it shows up under Soundpacks.\n\nYour packs live in:\n  ~/Library/Application Support/Clack/Soundpacks/\n\nWhere to find more:\n  \u{2022}  Mechvibes library \u{2014} mechvibes.com/sound-packs (biggest, same format)\n  \u{2022}  Pixabay \u{2014} pixabay.com (royalty-free .wav clips to build your own)\n\nMake your own: copy a folder, swap the .wav files, edit config.json. 'default' is the fallback; 'space', 'enter', \u{2026} override specific keys.";
         let text = wrap_label(mtm, body, 344.0);
         let btns = hstack(mtm, 8.0);
         unsafe {
