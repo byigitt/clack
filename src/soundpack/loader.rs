@@ -62,7 +62,7 @@ pub fn load_pack(dir: &Path, target_rate: u32) -> Result<SoundBank, String> {
     let mut down: HashMap<String, Vec<PcmId>> = HashMap::new();
     let mut up: HashMap<String, Vec<PcmId>> = HashMap::new();
 
-    let mut intern = |file: &str,
+    let intern = |file: &str,
                       samples: &mut Vec<Sample>,
                       by_file: &mut HashMap<String, PcmId>|
      -> Option<PcmId> {

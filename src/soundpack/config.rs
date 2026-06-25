@@ -10,6 +10,7 @@ pub struct PackConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // brand/author/category surfaced in the menu/about later
 pub struct Metadata {
     pub name: String,
     #[serde(default)]

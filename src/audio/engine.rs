@@ -112,6 +112,7 @@ impl AudioEngine {
         ))
     }
 
+    #[allow(dead_code)] // wired to the menu volume control in a later phase
     pub fn set_volume(&self, v: f32) {
         self.volume.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }

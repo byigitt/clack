@@ -19,8 +19,14 @@ tray-icon = "0.24"
 muda = "0.19"
 objc2 = "0.6"
 objc2-foundation = "0.3"
-objc2-core-foundation = "0.3"
-objc2-core-graphics = "0.3"
+
+[dependencies.objc2-core-foundation]
+version = "0.3"
+features = ["CFBase", "CFRunLoop", "CFMachPort"]
+
+[dependencies.objc2-core-graphics]
+version = "0.3"
+features = ["CGEvent", "CGEventTypes"]
 
 [dependencies.objc2-app-kit]
 version = "0.3"

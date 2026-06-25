@@ -1,8 +1,14 @@
 //! clack — native macOS mechanical keyboard sounds. Phase 0: Dock + menu bar shell.
 
 mod audio;
+mod input;
 mod permissions;
 mod soundpack;
+
+use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
@@ -41,7 +47,7 @@ fn main() {
     }
 
     // Start the audio engine, then load a pack at the device sample rate.
-    let (engine, mut tx) = audio::engine::AudioEngine::start().expect("audio engine");
+    let (engine, tx) = audio::engine::AudioEngine::start().expect("audio engine");
     eprintln!("clack: audio @ {} Hz", engine.sample_rate);
 
     let packs = soundpack::loader::list_packs();
@@ -53,22 +59,26 @@ fn main() {
         .unwrap_or_else(audio::bank::SoundBank::empty);
     eprintln!("clack: loaded '{}' — {} samples", bank.name, bank.samples.len());
 
-    // Phase 3 smoke test: click 'default' down every 500ms on a background thread.
-    if std::env::var("CLACK_TEST_TICK").is_ok() {
-        std::thread::spawn(move || loop {
-            if let Some(id) = bank.pick_down("default") {
-                let s = bank.sample(id);
-                let _ = tx.push(audio::engine::Trigger {
-                    data: s.data.clone(),
-                    frames: s.frames,
-                    gain: 1.0,
-                    ratio: 1.0,
-                });
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        });
+    // Shared state between the menu (later) and the event tap.
+    let bank = Arc::new(ArcSwap::from_pointee(bank));
+    let enabled = Arc::new(AtomicBool::new(true));
+    let pitch = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+    let disable_modifiers = Arc::new(AtomicBool::new(false));
+    let ignore_rapid = Arc::new(AtomicBool::new(false));
+
+    // Install the global keyboard tap. The tx (ring producer) moves into it.
+    let state = input::tap::TapState::new(
+        tx,
+        bank.clone(),
+        enabled.clone(),
+        pitch.clone(),
+        disable_modifiers.clone(),
+        ignore_rapid.clone(),
+    );
+    if !input::tap::install(state) {
+        eprintln!("clack: key capture unavailable — grant Accessibility and relaunch.");
     }
-    let _ = &engine;
+    let _ = &engine; // keep the audio stream alive
 
     let menu = Menu::new();
     menu.append(&PredefinedMenuItem::quit(Some("Quit clack")))
