@@ -6,7 +6,6 @@ mod audio;
 mod dashboard;
 mod input;
 mod launch;
-mod menu;
 mod permissions;
 mod settings;
 mod soundpack;
@@ -17,32 +16,8 @@ use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
 use objc2::runtime::ProtocolObject;
-use objc2_app_kit::NSApplicationDelegate;
-
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate};
 use objc2_foundation::MainThreadMarker;
-use tray_icon::{TrayIcon, TrayIconBuilder};
-
-/// Tiny generated icon so we don't need a bundled asset yet.
-// ponytail: solid-glyph 22x22 icon; swap for a real .icns at packaging.
-fn tray_image() -> tray_icon::Icon {
-    const N: u32 = 22;
-    let mut rgba = vec![0u8; (N * N * 4) as usize];
-    for y in 0..N {
-        for x in 0..N {
-            let i = ((y * N + x) * 4) as usize;
-            // a filled rounded-ish keycap silhouette
-            let edge = x < 3 || x >= N - 3 || y < 5 || y >= N - 5;
-            let on = !edge;
-            let a = if on { 255 } else { 0 };
-            rgba[i] = 235;
-            rgba[i + 1] = 235;
-            rgba[i + 2] = 235;
-            rgba[i + 3] = a;
-        }
-    }
-    tray_icon::Icon::from_rgba(rgba, N, N).expect("valid icon")
-}
 
 fn main() {
     let mtm = MainThreadMarker::new().expect("main thread");
@@ -115,18 +90,9 @@ fn main() {
         eprintln!("clack: key capture unavailable — grant Accessibility and relaunch.");
     }
 
-    // Build the menu + tray, and spawn the click poller.
-    let (m, action_map) = menu::build(&packs, &cfg);
-    let _tray: TrayIcon = TrayIconBuilder::new()
-        .with_menu(Box::new(m))
-        .with_tooltip("clack")
-        .with_icon(tray_image())
-        .build()
-        .expect("build tray");
-    menu::spawn_poller(action_map, shared.clone());
-
-    // Build the dashboard window + make it the app delegate (so a Dock click
-    // re-opens it). Keep the controller alive for the whole process.
+    // Build the status-bar menu + dashboard window, all on one controller, and
+    // make it the app delegate (so a Dock click re-opens the window).
+    let _ = &cfg;
     let controller = dashboard::Controller::new(mtm, shared);
     let delegate: &ProtocolObject<dyn NSApplicationDelegate> =
         ProtocolObject::from_ref(&*controller);
