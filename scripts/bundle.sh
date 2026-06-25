@@ -20,8 +20,17 @@ if [ -d soundpacks ]; then
   echo "==> bundled $(ls soundpacks | wc -l | tr -d ' ') soundpacks"
 fi
 
-echo "==> ad-hoc codesign (stable identity for Accessibility)"
-codesign --force --deep --sign - "$APP"
+# Prefer a stable self-signed identity so the Accessibility grant survives
+# rebuilds (ad-hoc changes the cdhash every build and drops the grant).
+# Create one once with:  scripts/make-signing-cert.sh
+SIGN_ID="${CLACK_SIGN_ID:-clack-dev}"
+if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
+  echo "==> codesign with stable identity: $SIGN_ID"
+  codesign --force --deep --sign "$SIGN_ID" "$APP"
+else
+  echo "==> ad-hoc codesign (no '$SIGN_ID' identity found)"
+  codesign --force --deep --sign - "$APP"
+fi
 
 echo "==> done: $APP"
 codesign -dv "$APP" 2>&1 | grep -E "Identifier|Signature" || true

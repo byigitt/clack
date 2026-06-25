@@ -108,9 +108,16 @@ define_class!(
         }
         #[unsafe(method(relaunchApp:))]
         fn relaunch_app(&self, _sender: &NSButton) {
+            // Spawn a detached shell that waits for this instance to fully quit,
+            // then relaunches the .app. Opening immediately would just re-activate
+            // the dying instance (which we then kill), so it would only close.
             if let Ok(exe) = std::env::current_exe() {
                 if let Some(app) = exe.ancestors().nth(3) {
-                    let _ = std::process::Command::new("open").arg(app).spawn();
+                    let path = app.to_string_lossy().replace('"', "\\\"");
+                    let _ = std::process::Command::new("/bin/sh")
+                        .arg("-c")
+                        .arg(format!("sleep 1; open \"{path}\""))
+                        .spawn();
                 }
             }
             let mtm = MainThreadMarker::from(self);
