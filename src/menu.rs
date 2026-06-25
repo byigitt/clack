@@ -20,6 +20,7 @@ pub enum Action {
     Pack(usize),
     ToggleRapid,
     ToggleModifiers,
+    ToggleLogin,
 }
 
 /// Shared state the poller mutates. All fields are `Send`/thread-safe.
@@ -29,6 +30,7 @@ pub struct MenuShared {
     pub volume: Arc<AtomicU32>, // master volume, f32 bits
     pub ignore_rapid: Arc<AtomicBool>,
     pub disable_modifiers: Arc<AtomicBool>,
+    pub launch_at_login: Arc<AtomicBool>,
     pub bank: Arc<ArcSwap<SoundBank>>,
     pub sample_rate: u32,
 }
@@ -42,6 +44,7 @@ impl MenuShared {
             pitch: f32::from_bits(self.pitch.load(Ordering::Relaxed)),
             ignore_rapid: self.ignore_rapid.load(Ordering::Relaxed),
             disable_modifiers: self.disable_modifiers.load(Ordering::Relaxed),
+            launch_at_login: self.launch_at_login.load(Ordering::Relaxed),
             pack,
         }
     }
@@ -102,6 +105,9 @@ pub fn build(
     let mods = CheckMenuItem::new("Disable modifier sounds", true, s.disable_modifiers, None);
     map.insert(mods.id().clone(), Action::ToggleModifiers);
     let _ = quick.append(&mods);
+    let login = CheckMenuItem::new("Launch at login", true, s.launch_at_login, None);
+    map.insert(login.id().clone(), Action::ToggleLogin);
+    let _ = quick.append(&login);
     let _ = menu.append(&quick);
     let _ = menu.append(&PredefinedMenuItem::separator());
 
@@ -141,6 +147,11 @@ pub fn spawn_poller(
                 Action::ToggleModifiers => {
                     let now = !shared.disable_modifiers.load(Ordering::Relaxed);
                     shared.disable_modifiers.store(now, Ordering::Relaxed);
+                }
+                Action::ToggleLogin => {
+                    let now = !shared.launch_at_login.load(Ordering::Relaxed);
+                    shared.launch_at_login.store(now, Ordering::Relaxed);
+                    crate::launch::set(now);
                 }
                 Action::Pack(idx) => {
                     if let Some(p) = packs.get(*idx) {

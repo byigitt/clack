@@ -11,6 +11,7 @@ pub struct Settings {
     pub pitch: f32,
     pub ignore_rapid: bool,
     pub disable_modifiers: bool,
+    pub launch_at_login: bool,
     /// Selected soundpack directory name (UUID), if any.
     pub pack: Option<String>,
 }
@@ -23,6 +24,7 @@ impl Default for Settings {
             pitch: 0.0,
             ignore_rapid: false,
             disable_modifiers: false,
+            launch_at_login: false,
             pack: None,
         }
     }

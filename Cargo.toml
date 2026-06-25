@@ -19,6 +19,7 @@ tray-icon = "0.24"
 muda = "0.19"
 objc2 = "0.6"
 objc2-foundation = "0.3"
+objc2-service-management = { version = "0.3", features = ["SMAppService", "SMErrors"] }
 
 [dependencies.objc2-core-foundation]
 version = "0.3"

@@ -4,6 +4,7 @@
 
 mod audio;
 mod input;
+mod launch;
 mod menu;
 mod permissions;
 mod settings;
@@ -81,6 +82,7 @@ fn main() {
     let pitch = Arc::new(AtomicU32::new(cfg.pitch.to_bits()));
     let disable_modifiers = Arc::new(AtomicBool::new(cfg.disable_modifiers));
     let ignore_rapid = Arc::new(AtomicBool::new(cfg.ignore_rapid));
+    let launch_at_login = Arc::new(AtomicBool::new(cfg.launch_at_login));
 
     // Install the global keyboard tap. The tx (ring producer) moves into it.
     let state = input::tap::TapState::new(
@@ -112,6 +114,7 @@ fn main() {
             volume: engine.volume_handle(),
             ignore_rapid: ignore_rapid.clone(),
             disable_modifiers: disable_modifiers.clone(),
+            launch_at_login: launch_at_login.clone(),
             bank: bank.clone(),
             sample_rate: engine.sample_rate,
         },
