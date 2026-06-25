@@ -1,6 +1,8 @@
 //! clack — native macOS mechanical keyboard sounds. Phase 0: Dock + menu bar shell.
 
+mod audio;
 mod permissions;
+mod soundpack;
 
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
@@ -36,6 +38,22 @@ fn main() {
 
     if !permissions::ensure_trusted() {
         eprintln!("clack: waiting for Accessibility permission (System Settings → Privacy & Security → Accessibility).");
+    }
+
+    // Phase 2 smoke check: list packs and load the first one.
+    let packs = soundpack::loader::list_packs();
+    eprintln!("clack: found {} soundpack(s)", packs.len());
+    if let Some(first) = packs.iter().find(|p| p.category == "keyboard") {
+        match soundpack::loader::load_pack(&first.dir, 48_000) {
+            Ok(bank) => eprintln!(
+                "clack: loaded '{}' — {} samples, {} down keys, supports_key_up={}",
+                bank.name,
+                bank.samples.len(),
+                bank.down.len(),
+                bank.supports_key_up
+            ),
+            Err(e) => eprintln!("clack: load failed: {e}"),
+        }
     }
 
     let menu = Menu::new();
