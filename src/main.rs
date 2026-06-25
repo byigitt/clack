@@ -1,5 +1,7 @@
 //! clack — native macOS mechanical keyboard sounds. Phase 0: Dock + menu bar shell.
 
+mod permissions;
+
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::MainThreadMarker;
 use tray_icon::menu::{Menu, PredefinedMenuItem};
@@ -31,6 +33,10 @@ fn main() {
     let app = NSApplication::sharedApplication(mtm);
     // Regular = visible in the Dock (not a pure menu-bar agent).
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+
+    if !permissions::ensure_trusted() {
+        eprintln!("clack: waiting for Accessibility permission (System Settings → Privacy & Security → Accessibility).");
+    }
 
     let menu = Menu::new();
     menu.append(&PredefinedMenuItem::quit(Some("Quit clack")))
