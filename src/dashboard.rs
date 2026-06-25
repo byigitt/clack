@@ -12,7 +12,8 @@ use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSBackingStoreType, NSBox, NSBoxType, NSButton,
     NSCellImagePosition, NSColor, NSControlStateValue, NSControlStateValueOff,
     NSControlStateValueOn, NSFont, NSImage, NSImageView, NSLayoutAttribute, NSMenu, NSMenuItem,
-    NSSegmentedControl, NSSlider, NSStackView, NSStackViewGravity, NSStatusBar, NSStatusItem,
+    NSScrollView, NSSegmentedControl, NSSlider, NSStackView, NSStackViewGravity, NSStatusBar,
+    NSStatusItem,
     NSSwitch, NSTextAlignment, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation,
     NSVariableStatusItemLength, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
     NSVisualEffectState, NSVisualEffectView, NSView, NSWindow, NSWindowStyleMask,
@@ -641,6 +642,26 @@ impl Controller {
         }
         *self.ivars().pack_rows.borrow_mut() = rows;
 
+        // The list can be long (20+ packs) — make it scroll.
+        let scroll = unsafe { NSScrollView::new(mtm) };
+        unsafe {
+            scroll.setHasVerticalScroller(true);
+            scroll.setDrawsBackground(false);
+            list.setTranslatesAutoresizingMaskIntoConstraints(false);
+            scroll.setDocumentView(Some(&list));
+            let clip = scroll.contentView();
+            list.topAnchor()
+                .constraintEqualToAnchor_constant(&clip.topAnchor(), 0.0)
+                .setActive(true);
+            list.leadingAnchor()
+                .constraintEqualToAnchor_constant(&clip.leadingAnchor(), 0.0)
+                .setActive(true);
+            list.widthAnchor()
+                .constraintEqualToAnchor_constant(&clip.widthAnchor(), 0.0)
+                .setActive(true);
+        }
+        size(&scroll, 344.0, 300.0);
+
         let actions = hstack(mtm, 8.0);
         unsafe {
             actions.addArrangedSubview(&action_button(
@@ -661,7 +682,7 @@ impl Controller {
         let pane = vstack(mtm, 14.0);
         unsafe {
             pane.addArrangedSubview(&pane_title(mtm, "Soundpacks"));
-            pane.addArrangedSubview(&list);
+            pane.addArrangedSubview(&scroll);
             pane.addArrangedSubview(&actions);
             pane.addArrangedSubview(&hint);
             pane.setTranslatesAutoresizingMaskIntoConstraints(false);

@@ -59,6 +59,8 @@ features = [
     "NSSegmentedControl",
     "NSVisualEffectView",
     "NSBox",
+    "NSScrollView",
+    "NSClipView",
 ]
 
 [profile.release]
