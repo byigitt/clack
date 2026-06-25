@@ -19,7 +19,7 @@ pub struct Trigger {
     pub ratio: f32,
 }
 
-const MAX_VOICES: usize = 64;
+const MAX_VOICES: usize = 128;
 const RING_CAP: usize = 1024;
 
 /// Handle to push triggers from the key thread (single producer).
@@ -46,11 +46,12 @@ impl AudioEngine {
         let sample_rate = supported.sample_rate();
         let channels = supported.channels() as usize;
 
-        // Small fixed buffer for low latency, clamped to what the device supports.
+        // Low-latency but safe against underruns: ~512 frames (~11ms @ 44.1k),
+        // still imperceptible for a keypress, clamped to the device's range.
         let mut config: cpal::StreamConfig = supported.config();
         config.buffer_size = match supported.buffer_size() {
             cpal::SupportedBufferSize::Range { min, max } => {
-                cpal::BufferSize::Fixed(256u32.clamp(*min, *max))
+                cpal::BufferSize::Fixed(512u32.clamp(*min, *max))
             }
             cpal::SupportedBufferSize::Unknown => cpal::BufferSize::Default,
         };
@@ -79,6 +80,9 @@ impl AudioEngine {
                 for v in voices.iter_mut() {
                     v.mix_frame(&mut l, &mut r, master);
                 }
+                // Clamp to avoid harsh overflow distortion when many keys overlap.
+                l = l.clamp(-1.0, 1.0);
+                r = r.clamp(-1.0, 1.0);
                 // Write to however many channels the device has.
                 if channels == 1 {
                     frame[0] = (l + r) * 0.5;

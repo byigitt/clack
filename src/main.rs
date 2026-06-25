@@ -25,7 +25,14 @@ fn main() {
     // Regular = visible in the Dock (not a pure menu-bar agent).
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
 
-    if !permissions::ensure_trusted() {
+    // CLACK_NO_PROMPT lets you launch the UI without the Accessibility prompt
+    // (e.g. for screenshots); key capture stays off until granted.
+    let trusted = if std::env::var_os("CLACK_NO_PROMPT").is_some() {
+        permissions::is_trusted()
+    } else {
+        permissions::ensure_trusted()
+    };
+    if !trusted {
         eprintln!("clack: waiting for Accessibility permission (System Settings → Privacy & Security → Accessibility).");
     }
 
@@ -97,6 +104,10 @@ fn main() {
     let delegate: &ProtocolObject<dyn NSApplicationDelegate> =
         ProtocolObject::from_ref(&*controller);
     app.setDelegate(Some(delegate));
+
+    // Bring the dashboard to the front on launch.
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
 
     let _ = &engine; // keep the audio stream alive
     app.run();

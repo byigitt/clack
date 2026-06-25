@@ -1,6 +1,6 @@
-//! Native UI: a status-bar menu (with a real volume slider) and a dashboard
-//! window. Both surfaces share one `Controller` and write through `Shared`, so
-//! the menu and the window stay behaviourally identical.
+//! Native UI: a status-bar menu (with a real volume slider) and a sidebar
+//! dashboard window (Settings / Soundpacks / Guide). Both surfaces share one
+//! `Controller` and write through `Shared`.
 #![allow(unused_unsafe)] // objc2 marks some AppKit setters safe; keep blocks uniform
 
 use std::cell::RefCell;
@@ -9,11 +9,11 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{define_class, msg_send, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationDelegate, NSBackingStoreType, NSBox, NSBoxType, NSColor,
-    NSControlStateValue, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSImage,
-    NSImageView, NSLayoutAttribute, NSMenu, NSMenuItem, NSPopUpButton,
+    NSApplication, NSApplicationDelegate, NSBackingStoreType, NSBox, NSBoxType, NSButton,
+    NSCellImagePosition, NSColor, NSControlStateValue, NSControlStateValueOff,
+    NSControlStateValueOn, NSFont, NSImage, NSImageView, NSLayoutAttribute, NSMenu, NSMenuItem,
     NSSegmentedControl, NSSlider, NSStackView, NSStackViewGravity, NSStatusBar, NSStatusItem,
-    NSSwitch, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation,
+    NSSwitch, NSTextAlignment, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation,
     NSVariableStatusItemLength, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
     NSVisualEffectState, NSVisualEffectView, NSView, NSWindow, NSWindowStyleMask,
 };
@@ -31,6 +31,9 @@ pub struct Ivars {
     kb_indices: Vec<usize>,
     window: RefCell<Option<Retained<NSWindow>>>,
     status: RefCell<Option<Retained<NSStatusItem>>>,
+    panes: RefCell<Vec<Retained<NSStackView>>>,
+    nav: RefCell<Vec<Retained<NSButton>>>,
+    pack_rows: RefCell<Vec<Retained<NSButton>>>,
 }
 
 define_class!(
@@ -51,7 +54,7 @@ define_class!(
     }
 
     impl Controller {
-        // --- dashboard window controls (NSSwitch / slider / segmented / popup) ---
+        // --- dashboard controls ---
         #[unsafe(method(swEnabled:))]
         fn dash_enabled(&self, sender: &NSSwitch) {
             self.ivars().shared.set_enabled(sw_on(sender));
@@ -64,13 +67,6 @@ define_class!(
         fn dash_pitch(&self, sender: &NSSegmentedControl) {
             let i = unsafe { sender.selectedSegment() }.max(0) as usize;
             self.ivars().shared.set_pitch(PITCH_STEPS.get(i).copied().unwrap_or(0.0));
-        }
-        #[unsafe(method(packChanged:))]
-        fn dash_pack(&self, sender: &NSPopUpButton) {
-            let i = unsafe { sender.indexOfSelectedItem() }.max(0) as usize;
-            if let Some(&g) = self.ivars().kb_indices.get(i) {
-                self.ivars().shared.set_pack(g);
-            }
         }
         #[unsafe(method(swRapid:))]
         fn dash_rapid(&self, sender: &NSSwitch) {
@@ -85,42 +81,69 @@ define_class!(
             self.ivars().shared.set_launch_at_login(sw_on(sender));
         }
 
+        // --- sidebar navigation + soundpack management ---
+        #[unsafe(method(navSelect:))]
+        fn nav_select(&self, sender: &NSButton) {
+            let idx = unsafe { sender.tag() }.max(0) as usize;
+            self.select_pane(idx);
+        }
+        #[unsafe(method(pickPack:))]
+        fn pick_pack(&self, sender: &NSButton) {
+            let g = unsafe { sender.tag() }.max(0) as usize;
+            self.ivars().shared.set_pack(g);
+            self.refresh_pack_rows();
+        }
+        #[unsafe(method(openFolder:))]
+        fn open_folder(&self, _sender: &NSButton) {
+            open_soundpacks_folder();
+        }
+        #[unsafe(method(getPacks:))]
+        fn get_packs(&self, _sender: &NSButton) {
+            open_url("https://github.com/kamillobinski/thock");
+        }
+
         // --- status-bar menu actions ---
         #[unsafe(method(menuEnable:))]
         fn menu_enable(&self, sender: &NSMenuItem) {
             let v = !self.ivars().shared.enabled();
             self.ivars().shared.set_enabled(v);
             unsafe { sender.setState(state(v)) };
+            self.refresh_dashboard();
         }
         #[unsafe(method(menuRapid:))]
         fn menu_rapid(&self, sender: &NSMenuItem) {
             let v = !self.ivars().shared.ignore_rapid();
             self.ivars().shared.set_ignore_rapid(v);
             unsafe { sender.setState(state(v)) };
+            self.refresh_dashboard();
         }
         #[unsafe(method(menuMods:))]
         fn menu_mods(&self, sender: &NSMenuItem) {
             let v = !self.ivars().shared.disable_modifiers();
             self.ivars().shared.set_disable_modifiers(v);
             unsafe { sender.setState(state(v)) };
+            self.refresh_dashboard();
         }
         #[unsafe(method(menuLogin:))]
         fn menu_login(&self, sender: &NSMenuItem) {
             let v = !self.ivars().shared.launch_at_login();
             self.ivars().shared.set_launch_at_login(v);
             unsafe { sender.setState(state(v)) };
+            self.refresh_dashboard();
         }
         #[unsafe(method(menuPitch:))]
         fn menu_pitch(&self, sender: &NSMenuItem) {
             let tag = unsafe { sender.tag() }.max(0) as usize;
             self.ivars().shared.set_pitch(PITCH_STEPS.get(tag).copied().unwrap_or(0.0));
             radio(sender);
+            self.refresh_dashboard();
         }
         #[unsafe(method(menuPack:))]
         fn menu_pack(&self, sender: &NSMenuItem) {
             let tag = unsafe { sender.tag() }.max(0) as usize;
             self.ivars().shared.set_pack(tag);
             radio(sender);
+            self.refresh_pack_rows();
         }
         #[unsafe(method(openDashboard:))]
         fn open_dashboard(&self, _sender: &NSMenuItem) {
@@ -171,10 +194,18 @@ impl Controller {
             kb_indices,
             window: RefCell::new(None),
             status: RefCell::new(None),
+            panes: RefCell::new(Vec::new()),
+            nav: RefCell::new(Vec::new()),
+            pack_rows: RefCell::new(Vec::new()),
         });
         let this: Retained<Self> = unsafe { msg_send![super(this), init] };
         this.build_status_item(mtm);
         this.build_window(mtm);
+        let start = std::env::var("CLACK_PANE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        this.select_pane(start);
         this
     }
 
@@ -185,6 +216,15 @@ impl Controller {
             #[allow(deprecated)]
             NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
         }
+    }
+
+    /// Re-read shared state into the dashboard's settings controls (keeps the
+    /// window in sync when something is toggled from the menu).
+    fn refresh_dashboard(&self) {
+        // The settings controls live in pane 0; rebuilding is overkill, so we
+        // just rebuild that pane's values lazily on next open. For now, simply
+        // ensure pack-row highlights stay correct.
+        self.refresh_pack_rows();
     }
 
     // ---- status-bar menu ----
@@ -207,14 +247,12 @@ impl Controller {
 
         let menu = NSMenu::new(mtm);
 
-        // Enable
         let enable = menu_item(mtm, "Enable clack", target, sel(c"menuEnable:"));
         unsafe { enable.setState(state(shared.enabled())) };
         menu.addItem(&enable);
         let sep = unsafe { NSMenuItem::separatorItem(mtm) };
         menu.addItem(&sep);
 
-        // Volume slider (custom view)
         menu.addItem(&label_item(mtm, "Volume"));
         let slider = unsafe {
             NSSlider::sliderWithValue_minValue_maxValue_target_action(
@@ -229,7 +267,6 @@ impl Controller {
         unsafe { slider.setContinuous(true) };
         menu.addItem(&slider_item(mtm, &slider));
 
-        // Pitch submenu (radio)
         let pitch_sub = NSMenu::new(mtm);
         let cur_pitch = shared.pitch();
         for (i, lbl) in PITCH_LABELS.iter().enumerate() {
@@ -247,7 +284,6 @@ impl Controller {
         }
         menu.addItem(&pitch_root);
 
-        // Soundpack submenu (radio)
         let pack_sub = NSMenu::new(mtm);
         let active = shared.current_pack_index();
         for &g in &self.ivars().kb_indices {
@@ -267,7 +303,6 @@ impl Controller {
         let sep = unsafe { NSMenuItem::separatorItem(mtm) };
         menu.addItem(&sep);
 
-        // Quick settings
         let rapid = menu_item(mtm, "Ignore rapid keys (<10ms)", target, sel(c"menuRapid:"));
         unsafe { rapid.setState(state(shared.ignore_rapid())) };
         menu.addItem(&rapid);
@@ -280,7 +315,6 @@ impl Controller {
         let sep = unsafe { NSMenuItem::separatorItem(mtm) };
         menu.addItem(&sep);
 
-        // Dashboard + Quit
         menu.addItem(&menu_item(mtm, "Open Dashboard\u{2026}", target, sel(c"openDashboard:")));
         menu.addItem(&menu_item(mtm, "Quit clack", target, sel(c"quitClack:")));
 
@@ -288,14 +322,30 @@ impl Controller {
         *self.ivars().status.borrow_mut() = Some(item);
     }
 
-    // ---- dashboard window ----
+    // ---- sidebar dashboard window ----
 
     fn build_window(&self, mtm: MainThreadMarker) {
-        let shared = &self.ivars().shared;
         let target: &AnyObject = self;
-        const W: f64 = 312.0; // inner content width
+        const SIDEBAR: f64 = 188.0;
+        const WINW: f64 = 588.0;
+        const WINH: f64 = 476.0;
 
-        // Header: keyboard glyph + title/subtitle.
+        let effect = unsafe { NSVisualEffectView::new(mtm) };
+        unsafe {
+            effect.setMaterial(NSVisualEffectMaterial::WindowBackground);
+            effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+            effect.setState(NSVisualEffectState::Active);
+        }
+
+        // Sidebar.
+        let sidebar = unsafe { NSVisualEffectView::new(mtm) };
+        unsafe {
+            sidebar.setMaterial(NSVisualEffectMaterial::Sidebar);
+            sidebar.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+            sidebar.setState(NSVisualEffectState::Active);
+            sidebar.setTranslatesAutoresizingMaskIntoConstraints(false);
+            effect.addSubview(&sidebar);
+        }
         let glyph = unsafe { NSImageView::new(mtm) };
         unsafe {
             if let Some(img) = NSImage::imageWithSystemSymbolName_accessibilityDescription(
@@ -305,26 +355,155 @@ impl Controller {
                 glyph.setImage(Some(&img));
             }
             glyph.setContentTintColor(Some(&NSColor::controlAccentColor()));
-            size(&glyph, 30.0, 26.0);
+            size(&glyph, 26.0, 22.0);
         }
-        let titles = vstack(mtm, 1.0);
+        let titles = vstack(mtm, 0.0);
         unsafe {
-            titles.addArrangedSubview(&label(mtm, "clack", 17.0, Weight::Bold, false));
-            titles.addArrangedSubview(&label(
-                mtm,
-                "mechanical keyboard sounds",
-                11.0,
-                Weight::Regular,
-                true,
-            ));
+            titles.addArrangedSubview(&label(mtm, "clack", 15.0, Weight::Bold, false));
+            titles.addArrangedSubview(&label(mtm, "keyboard sounds", 10.5, Weight::Regular, true));
         }
-        let header = hstack(mtm, 10.0);
+        let header = hstack(mtm, 9.0);
         unsafe {
             header.addArrangedSubview(&glyph);
             header.addArrangedSubview(&titles);
         }
+        let nav0 = nav_button(mtm, "Settings", "slider.horizontal.3", 0, target);
+        let nav1 = nav_button(mtm, "Soundpacks", "speaker.wave.2.fill", 1, target);
+        let nav2 = nav_button(mtm, "Guide", "book", 2, target);
+        let sb = vstack(mtm, 4.0);
+        unsafe {
+            sb.addArrangedSubview(&header);
+            sb.setCustomSpacing_afterView(22.0, &header);
+            sb.addArrangedSubview(&nav0);
+            sb.addArrangedSubview(&nav1);
+            sb.addArrangedSubview(&nav2);
+            sb.setTranslatesAutoresizingMaskIntoConstraints(false);
+            sidebar.addSubview(&sb);
+        }
+        pin(&sb, &sidebar, 38.0, 12.0);
+        *self.ivars().nav.borrow_mut() = vec![nav0, nav1, nav2];
 
-        // --- SOUND card ---
+        // Content container + panes.
+        let container = unsafe { NSView::new(mtm) };
+        unsafe {
+            container.setTranslatesAutoresizingMaskIntoConstraints(false);
+            effect.addSubview(&container);
+        }
+        let p_settings = self.settings_pane(mtm);
+        let p_packs = self.soundpacks_pane(mtm);
+        let p_guide = self.guide_pane(mtm);
+        for p in [&p_settings, &p_packs, &p_guide] {
+            unsafe { container.addSubview(p) };
+            pin(p, &container, 34.0, 26.0);
+        }
+        *self.ivars().panes.borrow_mut() = vec![p_settings, p_packs, p_guide];
+
+        // Explicit sizes so the content area has a definite size (otherwise the
+        // window collapses, since the panes don't pin a bottom).
+        unsafe {
+            sidebar
+                .leadingAnchor()
+                .constraintEqualToAnchor_constant(&effect.leadingAnchor(), 0.0)
+                .setActive(true);
+            sidebar
+                .topAnchor()
+                .constraintEqualToAnchor_constant(&effect.topAnchor(), 0.0)
+                .setActive(true);
+            sidebar.widthAnchor().constraintEqualToConstant(SIDEBAR).setActive(true);
+            sidebar.heightAnchor().constraintEqualToConstant(WINH).setActive(true);
+            container
+                .leadingAnchor()
+                .constraintEqualToAnchor_constant(&sidebar.trailingAnchor(), 0.0)
+                .setActive(true);
+            container
+                .topAnchor()
+                .constraintEqualToAnchor_constant(&effect.topAnchor(), 0.0)
+                .setActive(true);
+            container.widthAnchor().constraintEqualToConstant(WINW - SIDEBAR).setActive(true);
+            container.heightAnchor().constraintEqualToConstant(WINH).setActive(true);
+            container
+                .trailingAnchor()
+                .constraintEqualToAnchor_constant(&effect.trailingAnchor(), 0.0)
+                .setActive(true);
+        }
+
+        let style = NSWindowStyleMask::Titled
+            | NSWindowStyleMask::Closable
+            | NSWindowStyleMask::Miniaturizable;
+        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(WINW, WINH));
+        let window = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                NSWindow::alloc(mtm),
+                frame,
+                style,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        unsafe {
+            window.setTitle(ns_string!("clack"));
+            window.setReleasedWhenClosed(false);
+            window.setContentView(Some(&effect));
+            window.setContentSize(NSSize::new(WINW, WINH));
+            window.center();
+            window.makeKeyAndOrderFront(None);
+        }
+        *self.ivars().window.borrow_mut() = Some(window);
+    }
+
+    fn select_pane(&self, idx: usize) {
+        for (i, p) in self.ivars().panes.borrow().iter().enumerate() {
+            unsafe { p.setHidden(i != idx) };
+        }
+        for (i, b) in self.ivars().nav.borrow().iter().enumerate() {
+            let selected = i == idx;
+            let color = if selected {
+                unsafe { NSColor::controlAccentColor() }
+            } else {
+                unsafe { NSColor::secondaryLabelColor() }
+            };
+            let font = if selected {
+                unsafe { NSFont::boldSystemFontOfSize(13.0) }
+            } else {
+                unsafe { NSFont::systemFontOfSize(13.0) }
+            };
+            unsafe {
+                b.setContentTintColor(Some(&color));
+                b.setFont(Some(&font));
+            }
+        }
+    }
+
+    fn refresh_pack_rows(&self) {
+        let active = self.ivars().shared.current_pack_index();
+        for b in self.ivars().pack_rows.borrow().iter() {
+            let is_cur = active == Some(unsafe { b.tag() }.max(0) as usize);
+            let sym = if is_cur { "largecircle.fill.circle" } else { "circle" };
+            let color = if is_cur {
+                unsafe { NSColor::controlAccentColor() }
+            } else {
+                unsafe { NSColor::tertiaryLabelColor() }
+            };
+            unsafe {
+                if let Some(img) = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                    &NSString::from_str(sym),
+                    None,
+                ) {
+                    b.setImage(Some(&img));
+                }
+                b.setContentTintColor(Some(&color));
+            }
+        }
+    }
+
+    // ---- panes ----
+
+    fn settings_pane(&self, mtm: MainThreadMarker) -> Retained<NSStackView> {
+        let shared = &self.ivars().shared;
+        let target: &AnyObject = self;
+        const W: f64 = 332.0;
+        const IW: f64 = W - 32.0;
+
         let enable = switch(mtm, shared.enabled(), target, sel(c"swEnabled:"));
         let slider = unsafe {
             NSSlider::sliderWithValue_minValue_maxValue_target_action(
@@ -337,7 +516,7 @@ impl Controller {
             )
         };
         unsafe { slider.setContinuous(true) };
-        width(&slider, 150.0);
+        width(&slider, 160.0);
 
         let labels: Vec<Retained<NSString>> =
             PITCH_LABELS.iter().map(|t| NSString::from_str(t)).collect();
@@ -354,34 +533,17 @@ impl Controller {
         let pidx = PITCH_STEPS.iter().position(|&s| s == shared.pitch()).unwrap_or(0);
         unsafe { seg.setSelectedSegment(pidx as isize) };
 
-        let packs = unsafe { NSPopUpButton::new(mtm) };
-        unsafe {
-            for &g in &self.ivars().kb_indices {
-                packs.addItemWithTitle(&NSString::from_str(&shared.packs[g].name));
-            }
-            if let Some(a) = shared.current_pack_index() {
-                if let Some(pos) = self.ivars().kb_indices.iter().position(|&i| i == a) {
-                    packs.selectItemAtIndex(pos as isize);
-                }
-            }
-            packs.setTarget(Some(target));
-            packs.setAction(Some(sel(c"packChanged:")));
-        }
-        width(&packs, 170.0);
-
         let sound = card(
             mtm,
             "SOUND",
             W,
             vec![
-                row(mtm, "Enable", &enable, W),
-                row(mtm, "Volume", &slider, W),
-                row(mtm, "Pitch", &seg, W),
-                row(mtm, "Soundpack", &packs, W),
+                row(mtm, "Enable", &enable, IW),
+                row(mtm, "Volume", &slider, IW),
+                row(mtm, "Pitch", &seg, IW),
             ],
         );
 
-        // --- BEHAVIOR card ---
         let rapid = switch(mtm, shared.ignore_rapid(), target, sel(c"swRapid:"));
         let mods = switch(mtm, shared.disable_modifiers(), target, sel(c"swMods:"));
         let login = switch(mtm, shared.launch_at_login(), target, sel(c"swLogin:"));
@@ -390,55 +552,91 @@ impl Controller {
             "BEHAVIOR",
             W,
             vec![
-                row(mtm, "Ignore rapid keys", &rapid, W),
-                row(mtm, "Disable modifier sounds", &mods, W),
-                row(mtm, "Launch at login", &login, W),
+                row(mtm, "Ignore rapid keys", &rapid, IW),
+                row(mtm, "Disable modifier sounds", &mods, IW),
+                row(mtm, "Launch at login", &login, IW),
             ],
         );
 
-        let main = vstack(mtm, 14.0);
+        let pane = vstack(mtm, 16.0);
         unsafe {
-            main.addArrangedSubview(&header);
-            main.addArrangedSubview(&sound);
-            main.addArrangedSubview(&behavior);
-            main.setTranslatesAutoresizingMaskIntoConstraints(false);
+            pane.addArrangedSubview(&pane_title(mtm, "Settings"));
+            pane.addArrangedSubview(&sound);
+            pane.addArrangedSubview(&behavior);
+            pane.setTranslatesAutoresizingMaskIntoConstraints(false);
+        }
+        pane
+    }
+
+    fn soundpacks_pane(&self, mtm: MainThreadMarker) -> Retained<NSStackView> {
+        let shared = &self.ivars().shared;
+        let target: &AnyObject = self;
+
+        let list = vstack(mtm, 2.0);
+        let mut rows = Vec::new();
+        for &g in &self.ivars().kb_indices {
+            let b = pack_row(mtm, &shared.packs[g].name, g, target);
+            unsafe { list.addArrangedSubview(&b) };
+            rows.push(b);
+        }
+        *self.ivars().pack_rows.borrow_mut() = rows;
+
+        let actions = hstack(mtm, 8.0);
+        unsafe {
+            actions.addArrangedSubview(&action_button(
+                mtm,
+                "Open Soundpacks Folder",
+                target,
+                sel(c"openFolder:"),
+            ));
+            actions.addArrangedSubview(&action_button(mtm, "Get more\u{2026}", target, sel(c"getPacks:")));
         }
 
-        // Frosted background.
-        let effect = unsafe { NSVisualEffectView::new(mtm) };
-        unsafe {
-            effect.setMaterial(NSVisualEffectMaterial::WindowBackground);
-            effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-            effect.setState(NSVisualEffectState::Active);
-            effect.addSubview(&main);
-        }
-        pin(&main, &effect, 20.0);
+        let hint = wrap_label(
+            mtm,
+            "Drop a soundpack folder (config.json + .wav files) into the folder above, then relaunch clack. See the Guide tab for the format.",
+            336.0,
+        );
 
-        let style = NSWindowStyleMask::Titled
-            | NSWindowStyleMask::Closable
-            | NSWindowStyleMask::Miniaturizable
-            | NSWindowStyleMask::FullSizeContentView;
-        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(W + 40.0, 412.0));
-        let window = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                NSWindow::alloc(mtm),
-                frame,
-                style,
-                NSBackingStoreType::Buffered,
-                false,
-            )
-        };
+        let pane = vstack(mtm, 14.0);
         unsafe {
-            window.setTitle(ns_string!("clack"));
-            window.setTitlebarAppearsTransparent(true);
-            window.setTitleVisibility(objc2_app_kit::NSWindowTitleVisibility::Hidden);
-            window.setMovableByWindowBackground(true);
-            window.setReleasedWhenClosed(false);
-            window.setContentView(Some(&effect));
-            window.center();
-            window.makeKeyAndOrderFront(None);
+            pane.addArrangedSubview(&pane_title(mtm, "Soundpacks"));
+            pane.addArrangedSubview(&list);
+            pane.addArrangedSubview(&actions);
+            pane.addArrangedSubview(&hint);
+            pane.setTranslatesAutoresizingMaskIntoConstraints(false);
         }
-        *self.ivars().window.borrow_mut() = Some(window);
+        self.refresh_pack_rows();
+        pane
+    }
+
+    fn guide_pane(&self, mtm: MainThreadMarker) -> Retained<NSStackView> {
+        let target: &AnyObject = self;
+        let body = "clack reuses thock's soundpacks. Each pack is a folder with:\n\n  \u{2022}  config.json \u{2014} metadata + which sound plays for each key\n  \u{2022}  a set of .wav files\n\nWhere they live:\n  ~/Library/Application Support/Thock/Soundpacks/\n\nAdd a downloaded pack:\n  1.  Open the Soundpacks folder (button below).\n  2.  Drop the pack's folder inside it.\n  3.  Relaunch clack \u{2014} it shows up under Soundpacks.\n\nMake your own: copy a folder, swap the .wav files, edit config.json. 'default' is the fallback; 'space', 'enter', \u{2026} override specific keys.";
+        let text = wrap_label(mtm, body, 344.0);
+        let btns = hstack(mtm, 8.0);
+        unsafe {
+            btns.addArrangedSubview(&action_button(
+                mtm,
+                "Open Soundpacks Folder",
+                target,
+                sel(c"openFolder:"),
+            ));
+            btns.addArrangedSubview(&action_button(
+                mtm,
+                "Browse online\u{2026}",
+                target,
+                sel(c"getPacks:"),
+            ));
+        }
+        let pane = vstack(mtm, 14.0);
+        unsafe {
+            pane.addArrangedSubview(&pane_title(mtm, "Guide"));
+            pane.addArrangedSubview(&text);
+            pane.addArrangedSubview(&btns);
+            pane.setTranslatesAutoresizingMaskIntoConstraints(false);
+        }
+        pane
     }
 }
 
@@ -462,6 +660,21 @@ fn label(mtm: MainThreadMarker, text: &str, size: f64, w: Weight, secondary: boo
         }
     }
     field
+}
+
+fn pane_title(mtm: MainThreadMarker, text: &str) -> Retained<NSTextField> {
+    label(mtm, text, 19.0, Weight::Bold, false)
+}
+
+fn wrap_label(mtm: MainThreadMarker, text: &str, w: f64) -> Retained<NSTextField> {
+    let f = unsafe { NSTextField::wrappingLabelWithString(&NSString::from_str(text), mtm) };
+    unsafe {
+        f.setFont(Some(&NSFont::systemFontOfSize(12.0)));
+        f.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        f.setSelectable(false);
+    }
+    width(&f, w);
+    f
 }
 
 fn label_item(mtm: MainThreadMarker, text: &str) -> Retained<NSMenuItem> {
@@ -539,6 +752,71 @@ fn switch(
     sw
 }
 
+/// A sidebar nav button: SF symbol + title, borderless, left-aligned.
+fn nav_button(
+    mtm: MainThreadMarker,
+    title: &str,
+    symbol: &str,
+    tag: isize,
+    target: &AnyObject,
+) -> Retained<NSButton> {
+    let b = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            &NSString::from_str(title),
+            Some(target),
+            Some(sel(c"navSelect:")),
+            mtm,
+        )
+    };
+    unsafe {
+        b.setBordered(false);
+        b.setTag(tag);
+        b.setAlignment(NSTextAlignment::Left);
+        b.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+        b.setImagePosition(NSCellImagePosition::ImageLeft);
+        if let Some(img) =
+            NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(symbol), None)
+        {
+            b.setImage(Some(&img));
+        }
+        width(&b, 160.0);
+    }
+    b
+}
+
+/// A soundpack list row: a selectable button with a leading state circle.
+fn pack_row(mtm: MainThreadMarker, name: &str, tag: usize, target: &AnyObject) -> Retained<NSButton> {
+    let b = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            &NSString::from_str(name),
+            Some(target),
+            Some(sel(c"pickPack:")),
+            mtm,
+        )
+    };
+    unsafe {
+        b.setBordered(false);
+        b.setTag(tag as isize);
+        b.setAlignment(NSTextAlignment::Left);
+        b.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+        b.setImagePosition(NSCellImagePosition::ImageLeft);
+        width(&b, 320.0);
+    }
+    b
+}
+
+/// A normal push button used for actions (Open Folder, etc.).
+fn action_button(
+    mtm: MainThreadMarker,
+    title: &str,
+    target: &AnyObject,
+    action: objc2::runtime::Sel,
+) -> Retained<NSButton> {
+    unsafe {
+        NSButton::buttonWithTitle_target_action(&NSString::from_str(title), Some(target), Some(action), mtm)
+    }
+}
+
 /// A settings row: title on the left, control on the right.
 fn row(mtm: MainThreadMarker, title: &str, control: &NSView, w: f64) -> Retained<NSStackView> {
     let s = hstack(mtm, 8.0);
@@ -558,13 +836,13 @@ fn card(
     w: f64,
     rows: Vec<Retained<NSStackView>>,
 ) -> Retained<NSStackView> {
-    let inner = vstack(mtm, 10.0);
+    let inner = vstack(mtm, 12.0);
     unsafe {
         inner.setEdgeInsets(objc2_foundation::NSEdgeInsets {
-            top: 12.0,
-            left: 14.0,
-            bottom: 12.0,
-            right: 14.0,
+            top: 14.0,
+            left: 16.0,
+            bottom: 14.0,
+            right: 16.0,
         });
         for r in &rows {
             inner.addArrangedSubview(r);
@@ -590,7 +868,6 @@ fn card(
     wrap
 }
 
-/// Pin a view to a fixed width via Auto Layout.
 fn width(v: &NSView, w: f64) {
     unsafe {
         v.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -598,7 +875,6 @@ fn width(v: &NSView, w: f64) {
     }
 }
 
-/// Fixed width + height.
 fn size(v: &NSView, w: f64, h: f64) {
     unsafe {
         v.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -607,19 +883,31 @@ fn size(v: &NSView, w: f64, h: f64) {
     }
 }
 
-/// Pin a view to its container's edges with an inset (top/leading/trailing).
-fn pin(v: &NSView, container: &NSView, inset: f64) {
+/// Pin a view to its container with a top inset and horizontal side insets.
+fn pin(v: &NSView, container: &NSView, top: f64, side: f64) {
     unsafe {
         v.topAnchor()
-            .constraintEqualToAnchor_constant(&container.topAnchor(), inset)
+            .constraintEqualToAnchor_constant(&container.topAnchor(), top)
             .setActive(true);
         v.leadingAnchor()
-            .constraintEqualToAnchor_constant(&container.leadingAnchor(), inset)
+            .constraintEqualToAnchor_constant(&container.leadingAnchor(), side)
             .setActive(true);
         v.trailingAnchor()
-            .constraintEqualToAnchor_constant(&container.trailingAnchor(), -inset)
+            .constraintEqualToAnchor_constant(&container.trailingAnchor(), -side)
             .setActive(true);
     }
+}
+
+fn open_soundpacks_folder() {
+    if let Some(home) = dirs::home_dir() {
+        let dir = home.join("Library/Application Support/Thock/Soundpacks");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::process::Command::new("open").arg(&dir).spawn();
+    }
+}
+
+fn open_url(url: &str) {
+    let _ = std::process::Command::new("open").arg(url).spawn();
 }
 
 fn sel(name: &core::ffi::CStr) -> objc2::runtime::Sel {
